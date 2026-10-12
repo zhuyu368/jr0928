@@ -2051,6 +2051,8 @@ body {
   cursor: pointer;
   transition: all 0.2s ease;
   border: 1px solid transparent;
+  flex-shrink: 0;       /* 防止在手机端被压缩，保持与PC端一致的宽度 */
+  white-space: nowrap;  /* 防止分组名称换行，保持单行显示 */
 }
 
 .group-tag.active {
@@ -2088,6 +2090,7 @@ body {
 .group-name {
   font-size: 0.8rem;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .group-count {
@@ -6790,55 +6793,37 @@ input:checked + .slider:before {
         <i class="material-icons" id="icon-poke">expand_more</i>
       </div>
       <div class="settings-section-content collapsed" id="content-poke">
-        <div class="sticker-subtabs">
-          <button class="sticker-subtab-btn active" data-poke-tab="other" onclick="switchPokeSubTab('other')">👤 对方的拍一拍设置</button>
-          <button class="sticker-subtab-btn" data-poke-tab="self" onclick="switchPokeSubTab('self')">🙋 用户的拍一拍文案</button>
-        </div>
-        <!-- 对方的拍一拍设置 -->
-        <div id="poke-subtab-other">
-          <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">设置对方主动拍一拍的行为及文案库，对方将从中随机选择发送。</p>
-          <div class="poke-controls" style="background:rgba(255,255,255,0.5);border-radius:10px;padding:16px;">
-            <div class="poke-item" style="margin-bottom:15px;">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-                <span>允许对方主动拍一拍</span>
-                <label class="switch"><input type="checkbox" id="pokeEnableToggle"><span class="slider"></span></label>
-              </div>
+        <p>自定义拍一拍文案，对方将从中随机选择发送。每行一个。</p>
+        <div class="poke-controls" style="background: rgba(255,255,255,0.5); border-radius:10px; padding:16px;">
+          <div class="poke-item" style="margin-bottom:15px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+              <span>允许对方主动拍一拍</span>
+              <label class="switch">
+                <input type="checkbox" id="pokeEnableToggle">
+                <span class="slider"></span>
+              </label>
             </div>
-            <div class="poke-item" style="margin-bottom:15px;">
-              <div class="ratio-label">
-                <span>主动拍一拍频率</span>
-                <span class="active-call-value" id="pokeFrequencyValue">20%</span>
-              </div>
-              <input type="range" min="0" max="100" value="20" class="active-call-slider" id="pokeFrequencySlider">
+          </div>
+          <div class="poke-item" style="margin-bottom:15px;">
+            <div class="ratio-label">
+              <span>主动拍一拍频率</span>
+              <span class="active-call-value" id="pokeFrequencyValue">20%</span>
             </div>
-            <div class="poke-item">
-              <label class="communication-label">对方拍一拍文案库：</label>
-              <textarea class="tarot-textarea" id="pokePhrasesTextarea" placeholder="每行一个拍一拍后缀
+            <input type="range" min="0" max="100" value="20" class="active-call-slider" id="pokeFrequencySlider">
+          </div>
+          <div class="poke-item">
+            <label class="communication-label">拍一拍文案库：</label>
+            <textarea class="tarot-textarea" id="pokePhrasesTextarea" placeholder="每行一个拍一拍后缀
 例如：
 拍了拍你
 拍了拍我的肩膀
 戳了戳我"></textarea>
-              <div class="tarot-info"><span>当前文案数: <span id="pokePhraseCount">0</span></span></div>
+            <div class="tarot-info">
+              <span>当前文案数: <span id="pokePhraseCount">0</span></span>
             </div>
           </div>
-          <button class="save-phrases-btn" id="savePokeSettingsBtn" style="margin-top:10px;">保存拍一拍设置</button>
         </div>
-        <!-- 用户的拍一拍文案 -->
-        <div id="poke-subtab-self" style="display:none;">
-          <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">设置用户可以发送的拍一拍文案，可在聊天框表情弹窗中选择使用。</p>
-          <div class="poke-controls" style="background:rgba(255,255,255,0.5);border-radius:10px;padding:16px;">
-            <div class="poke-item">
-              <label class="communication-label">用户拍一拍文案库：</label>
-              <textarea class="tarot-textarea" id="selfPokePhrasesTextarea" placeholder="每行一个拍一拍文案
-例如：
-拍了拍你
-轻轻戳了戳你
-拍了拍你的脑袋"></textarea>
-              <div class="tarot-info"><span>当前文案数: <span id="selfPokePhraseCount">0</span></span></div>
-            </div>
-          </div>
-          <button class="save-phrases-btn" id="saveSelfPokeSettingsBtn" style="margin-top:10px;">保存用户文案</button>
-        </div>
+        <button class="save-phrases-btn" id="savePokeSettingsBtn" style="margin-top:10px;">保存拍一拍设置</button>
       </div>
     </div>
     <!-- ===== 拍一拍设置模块结束 ===== -->
@@ -10343,7 +10328,7 @@ const delay = minDelay + Math.random() * (maxDelay - minDelay);
         
         this.updateTarotPhraseCount();
         this.updateTarotStatus();
-        this.showNotification('已加载78张默认塔罗牌');
+        this.showNotification(`已加载 ${this.DEFAULT_TAROT_CARDS.length} 张默认塔罗牌字卡`);
         
         this.appData.drawnCards = new Set();
         this.saveAllData();
@@ -11425,6 +11410,7 @@ const delay = minDelay + Math.random() * (maxDelay - minDelay);
                 pollAutoSchedule: this.appData.pollAutoSchedule || this.dataManager.getPollAutoSchedule(),
                 callBackground: this.dataManager.getCallBackground(),
                 rejectSettings: this.dataManager.getRejectSettings(),
+                selfPoke: this.dataManager.getSelfPokePhrases ? this.dataManager.getSelfPokePhrases() : undefined,
                 keepAliveEnabled: localStorage.getItem('keep_alive_enabled') === '1',
             selfInfo: this.appData.selfInfo,
             otherInfo: this.appData.otherInfo,
@@ -11590,30 +11576,35 @@ if (importAllBtn) {
                     this.renderAllUI();
                     this.saveAllData();
                     
-                    if (data.letterSettings) {
-                        this.appData.letterSettings = data.letterSettings;
-                        this.dataManager.saveLetterSettings(data.letterSettings);
+                    // 修复：data 未定义 —— 导出时这些独立键平铺在 backup.appData 中
+                    const extra = backup.appData || {};
+                    if (extra.letterSettings) {
+                        this.appData.letterSettings = extra.letterSettings;
+                        this.dataManager.saveLetterSettings(extra.letterSettings);
                     }
-                    if (data.letterAutoNext) {
-                        this.appData.letterAutoNext = data.letterAutoNext;
-                        this.dataManager.saveLetterAutoNext(data.letterAutoNext);
+                    if (extra.letterAutoNext) {
+                        this.appData.letterAutoNext = extra.letterAutoNext;
+                        this.dataManager.saveLetterAutoNext(extra.letterAutoNext);
                     }
-                    if (data.pollSettings) {
-                        this.appData.pollSettings = data.pollSettings;
-                        this.dataManager.savePollSettings(data.pollSettings);
+                    if (extra.pollSettings) {
+                        this.appData.pollSettings = extra.pollSettings;
+                        this.dataManager.savePollSettings(extra.pollSettings);
                     }
-                    if (data.pollAutoSchedule) {
-                        this.appData.pollAutoSchedule = data.pollAutoSchedule;
-                        this.dataManager.savePollAutoSchedule(data.pollAutoSchedule);
+                    if (extra.pollAutoSchedule) {
+                        this.appData.pollAutoSchedule = extra.pollAutoSchedule;
+                        this.dataManager.savePollAutoSchedule(extra.pollAutoSchedule);
                     }
-                    if (data.callBackground !== undefined) {
-                        this.dataManager.saveCallBackground(data.callBackground);
+                    if (extra.callBackground !== undefined) {
+                        this.dataManager.saveCallBackground(extra.callBackground);
                     }
-                    if (data.rejectSettings) {
-                        this.dataManager.saveRejectSettings(data.rejectSettings);
+                    if (extra.rejectSettings) {
+                        this.dataManager.saveRejectSettings(extra.rejectSettings);
                     }
-                    if (data.keepAliveEnabled !== undefined) {
-                        localStorage.setItem('keep_alive_enabled', data.keepAliveEnabled ? '1' : '0');
+                    if (extra.selfPoke !== undefined && this.dataManager.saveSelfPokePhrases) {
+                        this.dataManager.saveSelfPokePhrases(extra.selfPoke);
+                    }
+                    if (extra.keepAliveEnabled !== undefined) {
+                        localStorage.setItem('keep_alive_enabled', extra.keepAliveEnabled ? '1' : '0');
                         if (typeof window.keepAliveSyncUI === 'function') window.keepAliveSyncUI();
                     }
 
@@ -11780,6 +11771,33 @@ if (savePhrasesBtn) savePhrasesBtn.addEventListener('click', () => this.saveCurr
 
 const deduplicatePhrasesBtn = document.getElementById('deduplicatePhrasesBtn');
 if (deduplicatePhrasesBtn) deduplicatePhrasesBtn.addEventListener('click', () => this.deduplicateCurrentPhrases());
+
+// ===== 修复：字卡批量添加 / 导入导出按钮绑定 =====
+// 批量添加字卡（确认添加字卡按钮）
+const batchAddConfirmBtn = document.getElementById('batchAddConfirmBtn');
+if (batchAddConfirmBtn) batchAddConfirmBtn.addEventListener('click', () => this.batchAddPhrases());
+// 批量添加输入框支持 Ctrl+Enter 快捷提交
+const batchAddTextarea = document.getElementById('batchAddTextarea');
+if (batchAddTextarea) {
+    batchAddTextarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            this.batchAddPhrases();
+        }
+    });
+}
+// 全部字卡导出（打开导出弹窗）
+const exportAllCardsBtn = document.getElementById('exportAllCardsBtn');
+if (exportAllCardsBtn) exportAllCardsBtn.addEventListener('click', () => this.openCardExportModal('all'));
+// 当前分组字卡导出
+const exportCurrentGroupBtn = document.getElementById('exportCurrentGroupBtn');
+if (exportCurrentGroupBtn) exportCurrentGroupBtn.addEventListener('click', () => this.openCardExportModal('group'));
+// 全部字卡导入
+const importAllCardsInput = document.getElementById('importAllCardsInput');
+if (importAllCardsInput) importAllCardsInput.addEventListener('change', (e) => this.importAllCards(e));
+// 字卡多选模式
+const cardMultiSelectToggleBtn = document.getElementById('cardMultiSelectToggleBtn');
+if (cardMultiSelectToggleBtn) cardMultiSelectToggleBtn.addEventListener('click', () => this.toggleCardMultiSelect());
 
 const addGroupBtn = document.getElementById('addPhraseGroupBtn');
 if (addGroupBtn) addGroupBtn.addEventListener('click', () => this.addPhraseGroup());
@@ -12089,18 +12107,6 @@ if (maxDelaySlider) {
         const savePokeBtn = document.getElementById('savePokeSettingsBtn');
         if (savePokeBtn) {
             savePokeBtn.addEventListener('click', () => this.savePokeSettings());
-        }
-        // ===== 新增：用户的拍一拍文案保存与计数 =====
-        const saveSelfPokeBtn = document.getElementById('saveSelfPokeSettingsBtn');
-        if (saveSelfPokeBtn) {
-            saveSelfPokeBtn.addEventListener('click', () => this.saveSelfPokeSettings());
-        }
-        const selfPokeTextarea = document.getElementById('selfPokePhrasesTextarea');
-        if (selfPokeTextarea) {
-            selfPokeTextarea.addEventListener('input', () => {
-                const countSpan = document.getElementById('selfPokePhraseCount');
-                if (countSpan) countSpan.textContent = selfPokeTextarea.value.split('\n').filter(l => l.trim()).length;
-            });
         }
         // ===== 新增：写信收信标签切换 =====
 const letterTabWrite = document.getElementById('letterTabWrite');
@@ -12873,24 +12879,6 @@ const delay = minDelay + Math.random() * (maxDelay - minDelay);
     // 添加这一行调试日志
     console.log('拍一拍设置已保存:', this.appData.pokeSettings);
 }
-
-// 保存用户的拍一拍文案
-saveSelfPokeSettings() {
-    const textarea = document.getElementById('selfPokePhrasesTextarea');
-    if (!textarea) return;
-    const text = textarea.value.trim();
-    const phrases = text ? text.split('\n').map(p => p.trim()).filter(p => p) : [];
-    if (phrases.length === 0) {
-        this.showNotification('用户拍一拍文案不能为空');
-        return;
-    }
-    if (this.dataManager.saveSelfPokePhrases) {
-        this.dataManager.saveSelfPokePhrases(phrases);
-    }
-    const countSpan = document.getElementById('selfPokePhraseCount');
-    if (countSpan) countSpan.textContent = phrases.length;
-    this.showNotification('用户拍一拍文案已保存');
-}
 // ========================
 // 新增：写信收信功能
 // ========================
@@ -13374,21 +13362,21 @@ deleteReplyRecord(index) {
 
     startPokeScheduler() {
     const settings = this.appData.pokeSettings;
-    if (!settings || !settings.enabled || settings.frequency <= 0) return;
-
-    // 临时改为 30秒，便于测试
-    const baseInterval = 10000; // 30秒（测试用，之后可改回300000）
-
     if (this.appData.pokeTimer) {
         clearInterval(this.appData.pokeTimer);
+        this.appData.pokeTimer = null;
     }
-    
+    // 开关关闭或频率为0时完全不触发
+    if (!settings || !settings.enabled || !settings.frequency || settings.frequency <= 0) return;
+
+    // 严格遵守用户设置的频率：100% = 每10秒拍一次，按比例换算触发周期，稳定无波动
+    // 例：80% → 每12.5秒一次；50% → 每20秒一次；20% → 每50秒一次；10% → 每100秒一次
+    const interval = Math.round(10000 * 100 / settings.frequency);
+
     this.appData.pokeTimer = setInterval(() => {
-        if (Math.random() * 100 < settings.frequency) {
-            console.log('触发对方拍一拍，频率:', settings.frequency);
-            this.sendRandomPokeFromOther();
-        }
-    }, baseInterval);
+        console.log('触发对方拍一拍，频率:', settings.frequency);
+        this.sendRandomPokeFromOther();
+    }, interval);
 }
 
     sendRandomPokeFromOther() {
@@ -13954,7 +13942,7 @@ async _afterImport() {
     this.renderPhraseGroupsUI();
     this.loadCurrentGroupToEditor();
     this._syncCurrentGroupImportExportUI();
-    await this.flushSave();
+    this.saveAllData();
     this.showNotification('字卡已成功导入并保存');
 }
 
@@ -17040,28 +17028,6 @@ self.addEventListener('notificationclick', e => {
 // ========================
 // 全局函数：折叠/展开卡片
 // ========================
-function switchPokeSubTab(tab) {
-  const otherTab = document.querySelector('[data-poke-tab="other"]');
-  const selfTab = document.querySelector('[data-poke-tab="self"]');
-  const otherPanel = document.getElementById('poke-subtab-other');
-  const selfPanel = document.getElementById('poke-subtab-self');
-  if (otherTab) otherTab.classList.toggle('active', tab === 'other');
-  if (selfTab) selfTab.classList.toggle('active', tab === 'self');
-  if (otherPanel) otherPanel.style.display = tab === 'other' ? 'block' : 'none';
-  if (selfPanel) selfPanel.style.display = tab === 'self' ? 'block' : 'none';
-}
-
-function switchStickerSubTab(tab) {
-  const otherTab = document.querySelector('[data-sticker-tab="other"]');
-  const selfTab = document.querySelector('[data-sticker-tab="self"]');
-  const otherPanel = document.getElementById('sticker-subtab-other');
-  const selfPanel = document.getElementById('sticker-subtab-self');
-  if (otherTab) otherTab.classList.toggle('active', tab === 'other');
-  if (selfTab) selfTab.classList.toggle('active', tab === 'self');
-  if (otherPanel) otherPanel.style.display = tab === 'other' ? 'block' : 'none';
-  if (selfPanel) selfPanel.style.display = tab === 'self' ? 'block' : 'none';
-}
-
 function toggleSection(sectionId) {
     const content = document.getElementById(`content-${sectionId}`);
     const icon = document.getElementById(`icon-${sectionId}`);
