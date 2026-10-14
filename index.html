@@ -7120,6 +7120,223 @@ input:checked + .slider:before {
 <!-- 通话/视频小窗口会动态创建 -->
 
 <script>
+/* =====================================================================
+   壁纸大容量存储
+   ---------------------------------------------------------------
+   手机（iPhone / iPad）的 localStorage 只有约 5MB，而且是按 UTF-16
+   双字节计算的：一张壁纸的 base64 就能吃掉一大半，再叠加表情包、
+   音乐等数据，写壁纸时就会超限——表现就是"设置成功后刷新就没了"。
+   这里把壁纸改存到容量大得多的 IndexedDB（主存储），localStorage
+   只作为镜像：能写就写，写不下也不影响壁纸保留，且不会去删其它数据。
+===================================================================== */
+window.WallpaperStore = (function () {
+  var DB_NAME = 'seven_wish_media';
+  var DB_VER = 1;
+  var STORE_NAME = 'kv';
+  var REC_KEY = 'background';
+  var LS_KEY = 'seven_and_wish_background';
+
+  var _db = null;
+  var _dbPromise = null;
+
+  function openDB() {
+    if (_dbPromise) return _dbPromise;
+    _dbPromise = new Promise(function (resolve) {
+      var settled = false;
+      var timer = null;
+      function finish(v) {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(v);
+      }
+      try {
+        var idbFactory = window.indexedDB;
+        if (!idbFactory) { finish(null); return; }
+        var req = idbFactory.open(DB_NAME, DB_VER);
+        req.onupgradeneeded = function () {
+          var db = req.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+        req.onsuccess = function () { _db = req.result; finish(_db); };
+        req.onerror = function () { finish(null); };
+        req.onblocked = function () { finish(null); };
+        timer = setTimeout(function () { finish(_db); }, 3000);
+      } catch (e) {
+        finish(null);
+      }
+    });
+    return _dbPromise;
+  }
+
+  function idbPut(rec) {
+    return openDB().then(function (db) {
+      if (!db) return false;
+      return new Promise(function (resolve) {
+        try {
+          var tx = db.transaction(STORE_NAME, 'readwrite');
+          tx.objectStore(STORE_NAME).put(rec, REC_KEY);
+          tx.oncomplete = function () { resolve(true); };
+          tx.onerror = function () { resolve(false); };
+          tx.onabort = function () { resolve(false); };
+        } catch (e) { resolve(false); }
+      });
+    })['catch'](function () { return false; });
+  }
+
+  function idbGet() {
+    return openDB().then(function (db) {
+      if (!db) return null;
+      return new Promise(function (resolve) {
+        try {
+          var tx = db.transaction(STORE_NAME, 'readonly');
+          var r = tx.objectStore(STORE_NAME).get(REC_KEY);
+          r.onsuccess = function () {
+            var v = r.result;
+            if (!v) { resolve(null); return; }
+            if (typeof v === 'string') { resolve({ backgroundImage: v, opacity: 100, ts: 0 }); return; }
+            resolve({
+              backgroundImage: (typeof v.backgroundImage === 'string' && v.backgroundImage) ? v.backgroundImage : null,
+              opacity: (typeof v.opacity === 'number') ? v.opacity : 100,
+              ts: (typeof v.ts === 'number') ? v.ts : 0
+            });
+          };
+          r.onerror = function () { resolve(null); };
+        } catch (e) { resolve(null); }
+      });
+    })['catch'](function () { return null; });
+  }
+
+  function idbDelete() {
+    return openDB().then(function (db) {
+      if (!db) return false;
+      return new Promise(function (resolve) {
+        try {
+          var tx = db.transaction(STORE_NAME, 'readwrite');
+          tx.objectStore(STORE_NAME)['delete'](REC_KEY);
+          tx.oncomplete = function () { resolve(true); };
+          tx.onerror = function () { resolve(false); };
+          tx.onabort = function () { resolve(false); };
+        } catch (e) { resolve(false); }
+      });
+    })['catch'](function () { return false; });
+  }
+
+  /* 读取 localStorage 镜像里的壁纸记录（老版本记录没有 ts，按 0 处理） */
+  function readLocal() {
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      if (!raw) return null;
+      var o = JSON.parse(raw);
+      if (o && typeof o.backgroundImage === 'string' && o.backgroundImage) {
+        return {
+          backgroundImage: o.backgroundImage,
+          opacity: (typeof o.opacity === 'number') ? o.opacity : 100,
+          ts: (typeof o.ts === 'number') ? o.ts : 0
+        };
+      }
+      return null;
+    } catch (e) { return null; }
+  }
+
+  /* 写 localStorage 镜像：保留原有其它字段，写后读回校验 */
+  function writeLocal(rec) {
+    try {
+      var img = (rec && typeof rec.backgroundImage === 'string') ? rec.backgroundImage : null;
+      var obj = {};
+      try {
+        var raw = localStorage.getItem(LS_KEY);
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') obj = parsed;
+        }
+      } catch (e) { obj = {}; }
+
+      obj.backgroundImage = img;
+      if (rec && typeof rec.opacity === 'number') obj.opacity = rec.opacity;
+      else if (typeof obj.opacity !== 'number') obj.opacity = 100;
+      if (rec && typeof rec.ts === 'number') obj.ts = rec.ts;
+
+      localStorage.setItem(LS_KEY, JSON.stringify(obj));
+
+      // 读回校验：手机端偶发"写入没报错、读回来却是空的"
+      var back = localStorage.getItem(LS_KEY);
+      if (!back) return false;
+      var bo = JSON.parse(back);
+      if (!bo || bo.backgroundImage !== img) return false;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function buildRec(settings) {
+    var img = (settings && typeof settings.backgroundImage === 'string') ? settings.backgroundImage : null;
+    if (!img) return null;
+    return {
+      backgroundImage: img,
+      opacity: (settings && typeof settings.opacity === 'number') ? settings.opacity : 100,
+      ts: Date.now()
+    };
+  }
+
+  var api = {
+    /* 保存壁纸：IndexedDB 必写，localStorage 尽力而为；任一成功即算成功 */
+    save: function (settings) {
+      var rec = buildRec(settings);
+      if (!rec) return api.remove();
+
+      var lsOk = false;
+      try { lsOk = writeLocal(rec); } catch (e) { lsOk = false; }
+
+      return idbPut(rec).then(function (idbOk) {
+        return !!(lsOk || idbOk);
+      })['catch'](function () { return lsOk; });
+    },
+
+    /* 移除壁纸：两个存储一起清 */
+    remove: function () {
+      try { writeLocal({ backgroundImage: null, opacity: 100, ts: Date.now() }); } catch (e) {}
+      return idbDelete().then(function () { return true; });
+    },
+
+    /* 读取最新的那份壁纸：两边都取，按时间戳取新的 */
+    load: function () {
+      var local = readLocal();
+      return idbGet().then(function (remote) {
+        if (!local) {
+          if (!remote) return null;
+          remote.source = 'idb';
+          return remote;
+        }
+        if (!remote) {
+          local.source = 'local';
+          return local;
+        }
+        if ((remote.ts || 0) > (local.ts || 0)) {
+          remote.source = 'idb';
+          return remote;
+        }
+        local.source = 'local';
+        return local;
+      })['catch'](function () {
+        if (local) { local.source = 'local'; return local; }
+        return null;
+      });
+    },
+
+    /* 彻底清空（重置所有数据时用） */
+    clear: function () {
+      try { localStorage.removeItem(LS_KEY); } catch (e) {}
+      return idbDelete();
+    }
+  };
+
+  return api;
+})();
+
 // ========================
 // 第一部分：从第一个代码文件移植的健壮存储逻辑
 // ========================
@@ -7373,57 +7590,68 @@ this.setStoredData(this.POKE_SETTINGS_KEY, {
     
     /**
      * 安全地保存数据到localStorage
-     * 包含容量检查和自动清理机制
+     * options.noCleanup: true  → 空间不足时不要清理其它数据（壁纸等由大容量存储兜底）
+     * options.verify:    true  → 写入后读回校验（手机端偶发"写入不报错但没落盘"）
      */
-    setStoredData(key, data) {
+    setStoredData(key, data, options) {
+        const opts = options || {};
+        let serialized;
         try {
-            // 估算数据大小（粗略）
-            const dataStr = typeof data === 'object' ? JSON.stringify(data) : String(data);
-            
-            // 如果数据过大（超过4.5MB），尝试清理或拒绝
-            if (dataStr.length > 4.5 * 1024 * 1024) {
-                console.warn(`数据过大 (${(dataStr.length/1024/1024).toFixed(2)}MB)，尝试压缩...`);
-                
-                // 如果是背景图片或头像等base64数据，可能太大
-                if (key.includes('background') || key.includes('avatar') || key.includes('sticker') || key.includes('music')) {
-                    // 对于图片数据，限制大小
-                    console.warn('图片数据过大，跳过保存');
-                    return false;
+            serialized = (typeof data === 'object') ? JSON.stringify(data) : String(data);
+        } catch (e) {
+            console.error(`数据序列化失败 [${key}]:`, e);
+            return false;
+        }
+
+        // 体积大的数据（例如壁纸）不再直接丢弃：照常尝试写入，
+        // 写不进去时由下面的配额清理逻辑腾出空间。
+        if (serialized.length > 4.5 * 1024 * 1024) {
+            console.warn(`数据较大 (${(serialized.length/1024/1024).toFixed(2)}MB) [${key}]，将尝试写入并在超限时清理旧数据`);
+        }
+
+        const tryWrite = () => {
+            localStorage.setItem(key, serialized);
+            if (opts.verify) {
+                const back = localStorage.getItem(key);
+                if (back !== serialized) {
+                    const err = new Error('写入后校验失败（数据未真正落盘）');
+                    err.name = 'QuotaExceededError';
+                    throw err;
                 }
             }
-            
-            // 尝试保存
-            if (typeof data === 'object') {
-                localStorage.setItem(key, JSON.stringify(data));
-            } else {
-                localStorage.setItem(key, data);
-            }
-            
             return true;
-            
+        };
+
+        try {
+            return tryWrite();
         } catch (e) {
             console.error(`保存到本地存储失败 [${key}]:`, e);
-            
-            // 如果是配额超限错误
-            if (e.name === 'QuotaExceededError') {
-                console.warn('存储空间不足，尝试清理旧数据...');
-                this.clearOldData();
-                
-                // 清理后重试一次
+
+            // 如果是配额超限错误（iOS Safari / 桌面浏览器的错误名和错误码不一致，这里一并兼容）
+            const isQuotaError = e && (
+                e.name === 'QuotaExceededError' ||
+                e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+                e.code === 22 || e.code === 1014
+            );
+            if (!isQuotaError) return false;
+
+            // 调用方自己会做降级（例如壁纸改存大容量存储），这里不动其它数据
+            if (opts.noCleanup) return false;
+
+            console.warn('存储空间不足，尝试清理旧数据...');
+
+            // 一次清理一项，边清理边重试，直到写入成功或没有可清理的数据
+            for (let i = 0; i < 8; i++) {
+                if (!this.clearOldData(true)) break;
                 try {
-                    if (typeof data === 'object') {
-                        localStorage.setItem(key, JSON.stringify(data));
-                    } else {
-                        localStorage.setItem(key, data);
-                    }
-                    console.log('重试保存成功');
+                    tryWrite();
+                    console.log(`清理后保存成功 [${key}]`);
                     return true;
                 } catch (e2) {
-                    console.error('重试保存仍然失败:', e2);
-                    return false;
+                    // 空间仍然不够，继续清理下一项
                 }
             }
-            
+            console.error(`清理旧数据后仍无法保存 [${key}]`);
             return false;
         }
     }
@@ -7431,7 +7659,7 @@ this.setStoredData(this.POKE_SETTINGS_KEY, {
     /**
      * 清理旧数据 - 只在空间不足时调用
      */
-    clearOldData() {
+    clearOldData(silent) {
         try {
             // 获取所有相关的存储键
             const allKeys = Object.keys(localStorage);
@@ -7456,13 +7684,14 @@ this.setStoredData(this.POKE_SETTINGS_KEY, {
             for (const key of priorityOrder) {
                 if (localStorage.getItem(key)) {
                     localStorage.removeItem(key);
-                    console.log(`已清理旧数据: ${key}`);
-                    break; // 一次只清理一个，避免删除过多
+                    if (!silent) console.log(`已清理旧数据: ${key}`);
+                    return true; // 一次只清理一个，避免删除过多
                 }
             }
         } catch (e) {
             console.error('清理旧数据失败:', e);
         }
+        return false;
     }
     
     // ========================
@@ -7674,7 +7903,35 @@ getAllEnabledPhrases() {
     }
     
     saveBackgroundSettings(settings) {
-        return this.setStoredData(this.BACKGROUND_KEY, settings);
+        const img = (settings && typeof settings.backgroundImage === 'string') ? settings.backgroundImage : null;
+        const opacity = (settings && typeof settings.opacity === 'number') ? settings.opacity : 100;
+        // 用长度 + 首尾片段做指纹，避免每次自动保存都对上兆的图片做 JSON.stringify
+        const sig = opacity + '|' + (img ? (img.length + ':' + img.substr(0, 48) + ':' + img.substr(-48)) : 'none');
+
+        // 同步写入大容量存储（同一张图只写一次）；localStorage 写不下时靠它兜底。
+        // 只在"有壁纸"时写入 —— 否则每次自动保存发现内存里没壁纸就把大容量存储
+        // 里那份删掉，等于又把壁纸弄丢了。清理由"恢复默认背景/重置"显式负责。
+        if (img && window.WallpaperStore && this._bgStoreSig !== sig) {
+            try {
+                const p = window.WallpaperStore.save(settings);
+                if (p && typeof p.then === 'function') {
+                    p.then(ok => { if (ok) this._bgStoreSig = sig; });
+                } else {
+                    this._bgStoreSig = sig;
+                }
+            } catch (e) {
+                console.warn('壁纸写入大容量存储失败:', e);
+            }
+        }
+
+        // 本地小存储：内容没变化就不重复写盘，避免手机端每次自动保存都卡顿
+        if (this._lastBackgroundSig === sig) return true;
+
+        // 壁纸用"不清理其它数据"的写法：手机存不下时宁可这个键写不进去，
+        // 也不能为了腾地方把表情包 / 音乐删掉。
+        const ok = this.setStoredData(this.BACKGROUND_KEY, settings, { noCleanup: true, verify: true });
+        this._lastBackgroundSig = ok ? sig : null;   // 失败时不留缓存，下次还会重试
+        return ok;
     }
     
     // ---- 塔罗牌设置 ----
@@ -7912,6 +8169,13 @@ savePendingLetterId(id) {
             keysToRemove.forEach(key => {
                 localStorage.removeItem(key);
             });
+
+            // 重置壁纸写入缓存，避免清除后误判"内容没变"而跳过写入
+            this._lastBackgroundStr = null;
+            this._lastBackgroundSig = null;
+            this._bgStoreSig = null;
+            // 大容量存储里的壁纸也要一起清掉，否则重置后还会被"恢复"回来
+            try { if (window.WallpaperStore) window.WallpaperStore.clear(); } catch (e) {}
             
             // 重新创建默认数据
             this.createDefaultData();
@@ -8322,6 +8586,9 @@ if (this.dataManager.savePendingLetterId) {
         
         // 3. 渲染所有UI
         this.renderAllUI();
+        
+        // 3.1 壁纸兜底恢复：本地小存储装不下、丢失时从大容量存储取回
+        this.restoreBackgroundImage();
         
         // 4. 启动所有定时器
         this.startAllTimers();
@@ -9504,6 +9771,42 @@ if (maxDelayValue && this.appData.sendSettings) {
             container.style.backgroundColor = '';
             container.style.opacity = '1';
         }
+    }
+    
+    /**
+     * 壁纸兜底恢复
+     * 手机本地小存储写不下壁纸时，壁纸实际保存在大容量存储里。
+     * 页面启动后异步对一次：本地没有、或大容量存储里的更新，就取回来显示。
+     */
+    restoreBackgroundImage() {
+        if (!window.WallpaperStore) return;
+
+        const startImg = (this.appData.backgroundSettings && this.appData.backgroundSettings.backgroundImage) || null;
+
+        Promise.resolve(window.WallpaperStore.load()).then(rec => {
+            if (!rec || typeof rec.backgroundImage !== 'string' || !rec.backgroundImage) return;
+
+            const nowImg = (this.appData.backgroundSettings && this.appData.backgroundSettings.backgroundImage) || null;
+
+            if (nowImg === rec.backgroundImage) return;   // 两边一致，不用动
+            if (nowImg !== startImg) return;              // 读取期间用户又改过壁纸，不要覆盖
+            if (nowImg && rec.source !== 'idb') return;   // 本地已有一份且大容量存储那份不是更新的
+
+            const opacity = (typeof rec.opacity === 'number') ? rec.opacity : 100;
+            this.appData.backgroundSettings = { backgroundImage: rec.backgroundImage, opacity: opacity };
+            this.updateBackgroundPreview();
+            this.applyBackgroundSettings();
+
+            const slider = document.getElementById('backgroundOpacitySlider');
+            if (slider) slider.value = opacity;
+            const valueEl = document.getElementById('backgroundOpacityValue');
+            if (valueEl) valueEl.textContent = opacity + '%';
+
+            // 顺手补写一份到本地小存储（写不进去也不影响，且不会清理其它数据）
+            this.dataManager._lastBackgroundSig = null;
+            this.dataManager._bgStoreSig = null;
+            try { this.dataManager.saveBackgroundSettings(this.appData.backgroundSettings); } catch (e) {}
+        }).catch(() => {});
     }
     
     updateOverallFrequencyDisplay() {
@@ -11103,25 +11406,217 @@ const delay = minDelay + Math.random() * (maxDelay - minDelay);
     
     handleBackgroundUpload(e) {
         const file = e.target.files[0];
-        if (!file) return;
-        
-        // 直接读取原图，不压缩
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            if (!this.appData.backgroundSettings) {
-                this.appData.backgroundSettings = { backgroundImage: null, opacity: 100 };
-            }
-            
-            this.appData.backgroundSettings.backgroundImage = e.target.result;
-            
-            this.updateBackgroundPreview();
-            this.applyBackgroundSettings();
-            this.saveAllData();
-            this.showNotification('背景图片已上传');
-        };
-        reader.readAsDataURL(file);
-        
         e.target.value = '';
+        if (!file) return;
+
+        this.showNotification('正在处理壁纸...');
+
+        this.prepareBackgroundImage(file)
+            .then(dataUrl => this.applyNewBackgroundImage(dataUrl))
+            .catch(err => {
+                console.error('壁纸读取失败:', err);
+                this.showNotification('壁纸读取失败，请换一张图片再试');
+            });
+    }
+
+    /**
+     * 是否 iPhone / iPad —— iOS Safari 的本地存储上限只有约 5MB，壁纸必须压得更小
+     */
+    _isIOSDevice() {
+        return /iP(hone|ad|od)/.test(navigator.userAgent) ||
+               (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    /**
+     * 图片数据的安全体积上限（MB，指 base64 字符数）
+     * 手机 localStorage 上限约 5MB 且按双字节计，可用字符数其实只有 250 万左右，
+     * 所以壁纸的镜像体积要压得比较狠；存不下的部分由大容量存储兜底。
+     */
+    _imageStoreBudgetMB() {
+        return this._isIOSDevice() ? 0.8 : 1.6;
+    }
+
+    /**
+     * 壁纸长边尺寸上限
+     */
+    _bgMaxSide() {
+        return this._isIOSDevice() ? 1280 : 1920;
+    }
+
+    _readFileAsDataURL(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    _loadImageElement(src) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error('图片解码失败'));
+            img.src = src;
+        });
+    }
+
+    /**
+     * 用 canvas 缩放 + 逐级降低画质，把图片压到指定体积以内。
+     * 画质降到下限还是超标时，会继续降低分辨率重试，直到达标。
+     */
+    _shrinkImage(img, maxSide, startQuality, targetLen) {
+        const srcW = img.naturalWidth || img.width;
+        const srcH = img.naturalHeight || img.height;
+        if (!srcW || !srcH) return null;
+
+        let side = maxSide;
+        let best = null;
+
+        for (let round = 0; round < 4; round++) {
+            const scale = Math.min(1, side / Math.max(srcW, srcH));
+            const w = Math.max(1, Math.round(srcW * scale));
+            const h = Math.max(1, Math.round(srcH * scale));
+
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return best;
+
+            // 透明图片转成 JPEG 会发黑，先铺一层白底
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+
+            let quality = startQuality;
+            let out = canvas.toDataURL('image/jpeg', quality);
+            while (targetLen && out.length > targetLen && quality > 0.4) {
+                quality -= 0.1;
+                out = canvas.toDataURL('image/jpeg', quality);
+            }
+
+            if (!best || out.length < best.length) best = out;
+            if (!targetLen || out.length <= targetLen) return out;
+
+            side = Math.round(side * 0.75);
+            if (side < 320) break;
+        }
+        return best;
+    }
+
+    /**
+     * 壁纸文件 → 可存储的 dataURL。
+     * 本来就不大就原样保留（不重新编码，画质无损）；太大才缩放压缩。
+     */
+    prepareBackgroundImage(file) {
+        const budget = this._imageStoreBudgetMB() * 1024 * 1024;
+        const maxSide = this._bgMaxSide();
+
+        return this._readFileAsDataURL(file).then(dataUrl => {
+            if (typeof dataUrl !== 'string' || dataUrl.length <= budget) return dataUrl;
+
+            return this._loadImageElement(dataUrl)
+                .then(img => {
+                    const compressed = this._shrinkImage(img, maxSide, 0.85, budget);
+                    // 压缩失败或体积反而更大：退回原图（大容量存储能装下，总比丢了好）
+                    if (!compressed || compressed.length >= dataUrl.length) return dataUrl;
+                    return compressed;
+                })
+                .catch(() => dataUrl);
+        });
+    }
+
+    /**
+     * 把已有的图片数据压到指定体积以内；不是图片或本来就小则原样返回
+     */
+    prepareStorableImage(src, budgetMB) {
+        if (typeof src !== 'string' || src.indexOf('data:image') !== 0) return Promise.resolve(src);
+
+        const budget = (budgetMB || this._imageStoreBudgetMB()) * 1024 * 1024;
+        if (src.length <= budget) return Promise.resolve(src);
+
+        return this._loadImageElement(src)
+            .then(img => {
+                const compressed = this._shrinkImage(img, this._bgMaxSide(), 0.8, budget);
+                return (compressed && compressed.length < src.length) ? compressed : src;
+            })
+            .catch(() => src);
+    }
+
+    /**
+     * 把已有壁纸调整到当前设备存得下的体积（导入旧备份时用）
+     */
+    normalizeBackgroundForStorage() {
+        const bg = this.appData.backgroundSettings;
+        if (!bg || typeof bg.backgroundImage !== 'string') return Promise.resolve(false);
+
+        return this.prepareStorableImage(bg.backgroundImage).then(dataUrl => {
+            bg.backgroundImage = dataUrl;
+            return true;
+        });
+    }
+
+    /**
+     * 落地壁纸：写设置 + 持久化，并且真的检查保存结果。
+     * 本地小存储写不下时，只要大容量存储写成功就算成功；
+     * 两边都失败才会压缩一档重试，最终仍然失败则回滚界面并明确提示，
+     * 避免出现"看着换好了、刷新就没了"的假象。
+     */
+    applyNewBackgroundImage(dataUrl) {
+        const prev = this.appData.backgroundSettings
+            ? JSON.parse(JSON.stringify(this.appData.backgroundSettings))
+            : null;
+
+        if (!this.appData.backgroundSettings) {
+            this.appData.backgroundSettings = { backgroundImage: null, opacity: 100 };
+        }
+        this.appData.backgroundSettings.backgroundImage = dataUrl;
+
+        this.updateBackgroundPreview();
+        this.applyBackgroundSettings();
+
+        const lsOk = this.dataManager.saveBackgroundSettings(this.appData.backgroundSettings);
+        const storeOk = window.WallpaperStore
+            ? window.WallpaperStore.save(this.appData.backgroundSettings)
+            : Promise.resolve(false);
+
+        this.saveAllData();
+
+        return Promise.resolve(storeOk).then(saved => {
+            if (lsOk || saved) {
+                this.showNotification(lsOk ? '背景图片已上传' : '背景图片已上传（已存入大容量存储）');
+                return true;
+            }
+
+            // 两个存储都没写进去：压到更小再试一次（手机存储被表情包 / 音乐占满时很常见）
+            return this.prepareStorableImage(dataUrl, 0.5).then(smaller => {
+                if (!smaller || smaller.length >= dataUrl.length) smaller = dataUrl;
+
+                this.appData.backgroundSettings.backgroundImage = smaller;
+                this.updateBackgroundPreview();
+                this.applyBackgroundSettings();
+
+                const lsOk2 = this.dataManager.saveBackgroundSettings(this.appData.backgroundSettings);
+                const storeOk2 = window.WallpaperStore
+                    ? window.WallpaperStore.save(this.appData.backgroundSettings)
+                    : Promise.resolve(false);
+                this.saveAllData();
+
+                return Promise.resolve(storeOk2).then(saved2 => {
+                    if (lsOk2 || saved2) {
+                        this.showNotification('背景图片已上传（已自动压缩以适应手机存储）');
+                        return true;
+                    }
+                    // 回滚：让界面显示的和真正存下来的保持一致
+                    this.appData.backgroundSettings = prev || { backgroundImage: null, opacity: 100 };
+                    this.updateBackgroundPreview();
+                    this.applyBackgroundSettings();
+                    this.showNotification('壁纸保存失败：请换一张小一点的图片再试');
+                    return false;
+                });
+            });
+        });
     }
     
     compressImage(file, options) {
@@ -11167,7 +11662,16 @@ const delay = minDelay + Math.random() * (maxDelay - minDelay);
             this.appData.backgroundSettings.backgroundImage = null;
             this.appData.backgroundSettings.opacity = 100;
         }
-        
+
+        // 大容量存储里的壁纸也要清掉，否则刷新后会被"恢复"回来
+        if (this.dataManager) {
+            this.dataManager._lastBackgroundSig = null;
+            this.dataManager._bgStoreSig = null;
+        }
+        if (window.WallpaperStore) {
+            try { window.WallpaperStore.remove(); } catch (e) {}
+        }
+
         const slider = document.getElementById('backgroundOpacitySlider');
         const value = document.getElementById('backgroundOpacityValue');
         
@@ -11399,55 +11903,85 @@ const delay = minDelay + Math.random() * (maxDelay - minDelay);
     }
 
     /**
-     * 导出全部数据（全部备份）
+     * 导出全部数据（全部备份，含壁纸）
      */
     exportAllData() {
-        // 只提取需要持久化的数据，避免混入运行时对象（如 Audio、DOM 元素等）
-        const persistentData = {
-                letterSettings: this.appData.letterSettings || this.dataManager.getLetterSettings(),
-                letterAutoNext: this.appData.letterAutoNext || this.dataManager.getLetterAutoNext(),
-                pollSettings: this.appData.pollSettings || this.dataManager.getPollSettings(),
-                pollAutoSchedule: this.appData.pollAutoSchedule || this.dataManager.getPollAutoSchedule(),
-                callBackground: this.dataManager.getCallBackground(),
-                rejectSettings: this.dataManager.getRejectSettings(),
-                selfPoke: this.dataManager.getSelfPokePhrases ? this.dataManager.getSelfPokePhrases() : undefined,
-                keepAliveEnabled: localStorage.getItem('keep_alive_enabled') === '1',
-            selfInfo: this.appData.selfInfo,
-            otherInfo: this.appData.otherInfo,
-            messages: this.appData.messages,
-            phraseGroups: this.appData.phraseGroups,
-            stickers: this.appData.stickers,
-            sendSettings: this.appData.sendSettings,
-            appearanceSettings: this.appData.appearanceSettings,
-            backgroundSettings: this.appData.backgroundSettings,
-            tarotSettings: this.appData.tarotSettings,
-            communicationSettings: this.appData.communicationSettings,
-            groupSettings: this.appData.groupSettings,
-            musicSettings: this.appData.musicSettings,
-            pokeSettings: this.appData.pokeSettings, // 新增拍一拍设置
-            drawnCards: Array.from(this.appData.drawnCards || []),
-            loveDays: this.appData.loveDays,
-            readNoReplyMessageIds: this.appData.readNoReplyMessageIds,
-            todayDate: this.appData.todayDate
+        const buildAndSave = (bgSettings) => {
+            // 只提取需要持久化的数据，避免混入运行时对象（如 Audio、DOM 元素等）
+            const persistentData = {
+                    letterSettings: this.appData.letterSettings || this.dataManager.getLetterSettings(),
+                    letterAutoNext: this.appData.letterAutoNext || this.dataManager.getLetterAutoNext(),
+                    pollSettings: this.appData.pollSettings || this.dataManager.getPollSettings(),
+                    pollAutoSchedule: this.appData.pollAutoSchedule || this.dataManager.getPollAutoSchedule(),
+                    callBackground: this.dataManager.getCallBackground(),
+                    rejectSettings: this.dataManager.getRejectSettings(),
+                    selfPoke: this.dataManager.getSelfPokePhrases ? this.dataManager.getSelfPokePhrases() : undefined,
+                    keepAliveEnabled: localStorage.getItem('keep_alive_enabled') === '1',
+                selfInfo: this.appData.selfInfo,
+                otherInfo: this.appData.otherInfo,
+                messages: this.appData.messages,
+                phraseGroups: this.appData.phraseGroups,
+                stickers: this.appData.stickers,
+                sendSettings: this.appData.sendSettings,
+                appearanceSettings: this.appData.appearanceSettings,
+                backgroundSettings: bgSettings || null,
+                tarotSettings: this.appData.tarotSettings,
+                communicationSettings: this.appData.communicationSettings,
+                groupSettings: this.appData.groupSettings,
+                musicSettings: this.appData.musicSettings,
+                pokeSettings: this.appData.pokeSettings, // 新增拍一拍设置
+                drawnCards: Array.from(this.appData.drawnCards || []),
+                loveDays: this.appData.loveDays,
+                readNoReplyMessageIds: this.appData.readNoReplyMessageIds,
+                todayDate: this.appData.todayDate
+            };
+
+            const backupData = {
+                type: 'full-backup',
+                exportDate: new Date().toISOString(),
+                appData: persistentData
+            };
+
+            let jsonStr;
+            try {
+                jsonStr = JSON.stringify(backupData, null, 2);
+            } catch (e) {
+                console.error('导出序列化失败:', e);
+                this.showNotification('导出失败：数据过大，请先清理部分表情包或音乐', 'error');
+                return false;
+            }
+
+            const ok = this._downloadBlob(jsonStr, `dream_lover_backup_${new Date().toISOString().slice(0, 10)}.json`, 'application/json');
+            const hasBg = !!(bgSettings && bgSettings.backgroundImage);
+            if (ok) {
+                this.showNotification(hasBg ? '全部备份已导出（含壁纸）' : '全部备份已导出', 'success');
+            } else {
+                this.showNotification('导出失败，请改用 Safari / Chrome 打开后再试', 'error');
+            }
+            return ok;
         };
 
-        const backupData = {
-            type: 'full-backup',
-            exportDate: new Date().toISOString(),
-            appData: persistentData
-        };
+        const cur = this.appData.backgroundSettings;
+        // 本地内存里已有壁纸 → 直接用
+        if ((cur && cur.backgroundImage) || !window.WallpaperStore) {
+            return Promise.resolve(buildAndSave(cur));
+        }
 
-        const jsonStr = JSON.stringify(backupData, null, 2);
-        const blob = new Blob([jsonStr], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `dream_lover_backup_${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        this.showNotification('全部备份已导出');
+        // 内存里没有（例如刚打开页面还没恢复）→ 从大容量存储取一份，保证备份里带壁纸
+        return Promise.resolve(window.WallpaperStore.load()).then(rec => {
+            let bg = cur;
+            if (rec && rec.backgroundImage) {
+                bg = {
+                    backgroundImage: rec.backgroundImage,
+                    opacity: (typeof rec.opacity === 'number') ? rec.opacity : 100
+                };
+                this.appData.backgroundSettings = {
+                    backgroundImage: bg.backgroundImage,
+                    opacity: bg.opacity
+                };
+            }
+            return buildAndSave(bg);
+        }).catch(() => Promise.resolve(buildAndSave(cur)));
     }
     
     // ========================
@@ -11491,7 +12025,7 @@ if (importAllBtn) {
             const file = e.target.files[0];
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = (ev) => {
+            reader.onload = async (ev) => {
                 try {
                     const backup = JSON.parse(ev.target.result);
                     if (backup.type !== 'full-backup' && !backup.appData) {
@@ -11543,7 +12077,15 @@ if (importAllBtn) {
                         }
                         
                         // 背景设置
-                        if (backup.appData.backgroundSettings) this.appData.backgroundSettings = backup.appData.backgroundSettings;
+                        if (backup.appData.backgroundSettings) {
+                            this.appData.backgroundSettings = backup.appData.backgroundSettings;
+                            // 备份里没有壁纸 → 把本机大容量存储里的旧壁纸一并清掉，避免刷新后被"复活"
+                            if (!this.appData.backgroundSettings.backgroundImage && window.WallpaperStore) {
+                                try { window.WallpaperStore.remove(); } catch (e) {}
+                                this.dataManager._bgStoreSig = null;
+                                this.dataManager._lastBackgroundSig = null;
+                            }
+                        }
                         
                         // 塔罗牌设置
                         if (backup.appData.tarotSettings) this.appData.tarotSettings = backup.appData.tarotSettings;
@@ -11572,6 +12114,10 @@ if (importAllBtn) {
                         }
                     }
                     
+                    // 备份里的壁纸可能是旧版本存的超大原图，先压到手机存得下的体积，
+                    // 否则导入后一样会出现"刷新就没壁纸"的问题
+                    await this.normalizeBackgroundForStorage();
+                    
                     // 重新渲染所有UI
                     this.renderAllUI();
                     this.saveAllData();
@@ -11595,7 +12141,7 @@ if (importAllBtn) {
                         this.dataManager.savePollAutoSchedule(extra.pollAutoSchedule);
                     }
                     if (extra.callBackground !== undefined) {
-                        this.dataManager.saveCallBackground(extra.callBackground);
+                        this.dataManager.saveCallBackground(await this.prepareStorableImage(extra.callBackground));
                     }
                     if (extra.rejectSettings) {
                         this.dataManager.saveRejectSettings(extra.rejectSettings);
@@ -13642,14 +14188,27 @@ _parsePresetBackupJSON(p) {
 
 /**
  * 触发文件下载
+ * 返回值：true 表示已触发下载；false 表示浏览器拦截 / 不支持
  */
 _downloadBlob(content, filename, mime) {
-    const blob = new Blob([content], { type: mime });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    try {
+        const blob = new Blob([content], { type: mime || 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.rel = 'noopener';
+        a.style.display = 'none';
+        document.body.appendChild(a);   // 手机上不挂到文档里点击可能无效
+        a.click();
+        document.body.removeChild(a);
+        // 手机上适当延后释放，避免下载还没开始地址就被回收
+        setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 15000);
+        return true;
+    } catch (e) {
+        console.error('导出下载失败:', e);
+        return false;
+    }
 }
 
 /** 当前待导出模式：'current'（当前分组）或 'all'（全部） */
@@ -16977,14 +17536,16 @@ self.addEventListener('notificationclick', e => {
             uploadBtn.addEventListener('click', () => bgUpload.click());
             bgUpload.addEventListener('change', (e) => {
                 const file = e.target.files[0];
+                e.target.value = '';
                 if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (evt) => {
-                        this.dataManager.saveCallBackground(evt.target.result);
+                    this.prepareBackgroundImage(file).then((dataUrl) => {
+                        const ok = this.dataManager.saveCallBackground(dataUrl);
                         updatePreview();
-                        this.showNotification('通话背景已更新');
-                    };
-                    reader.readAsDataURL(file);
+                        this.showNotification(ok ? '通话背景已更新' : '通话背景保存失败：手机存储空间不足');
+                    }).catch((err) => {
+                        console.error('通话背景读取失败:', err);
+                        this.showNotification('通话背景读取失败，请换一张图片再试');
+                    });
                 }
             });
         }
